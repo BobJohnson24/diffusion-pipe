@@ -13,6 +13,7 @@ import safetensors
 
 from models.base import ComfyPipeline, make_contiguous, ModelWrapper, PreprocessMediaFile
 from utils.common import AUTOCAST_DTYPE, get_lin_function, time_shift, is_main_process, one_at_a_time
+from utils.int8 import is_int8_dtype, quantize_linear_modules
 from utils.offloading import ModelOffloader
 import comfy.ldm.common_dit
 import comfy.latent_formats
@@ -258,10 +259,18 @@ class LTX2Pipeline(ComfyPipeline):
         del model_patcher
 
         diffusion_model_dtype = self.model_config.get('diffusion_model_dtype', dtype)
-        for name, p in self.diffusion_model.named_parameters():
-            if any(keyword in name for keyword in self.keep_in_high_precision) or p.ndim == 1:
-                continue
-            p.data = p.data.to(diffusion_model_dtype)
+        if is_int8_dtype(diffusion_model_dtype):
+            self.dequantize(self.diffusion_model, dtype)
+            quantize_linear_modules(
+                self.diffusion_model,
+                compute_dtype=dtype,
+                keep_in_high_precision=self.keep_in_high_precision,
+            )
+        else:
+            for name, p in self.diffusion_model.named_parameters():
+                if any(keyword in name for keyword in self.keep_in_high_precision) or p.ndim == 1:
+                    continue
+                p.data = p.data.to(diffusion_model_dtype)
 
         self.diffusion_model.train()
         for name, p in self.diffusion_model.named_parameters():

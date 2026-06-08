@@ -21,6 +21,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from tqdm import tqdm
 
 from utils.common import is_main_process, VIDEO_EXTENSIONS, round_to_nearest_multiple, round_down_to_multiple, AUTOCAST_DTYPE
+from utils.int8 import is_int8_dtype, quantize_linear_modules
 import comfy.utils
 import comfy.sd
 import comfy.sd1_clip
@@ -515,6 +516,15 @@ class ComfyPipeline(CommonPipeline):
             self.text_encoders.append(ModelWrapper(load_fn))
 
     def dequantize(self, model, diffusion_model_dtype):
+        if is_int8_dtype(diffusion_model_dtype):
+            self.dequantize(model, self.model_config['dtype'])
+            quantize_linear_modules(
+                model,
+                compute_dtype=self.model_config['dtype'],
+                keep_in_high_precision=self.keep_in_high_precision,
+            )
+            return
+
         operations = comfy.ops.disable_weight_init
         for mod_name, module in model.named_children():
             is_quantized = False

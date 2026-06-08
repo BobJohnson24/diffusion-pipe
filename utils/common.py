@@ -18,6 +18,7 @@ DTYPE_MAP = {
     'float8': torch.float8_e4m3fn,
     'float8_e4m3fn': torch.float8_e4m3fn,
     'float8_e5m2': torch.float8_e5m2,
+    'int8': torch.int8,
 }
 VIDEO_EXTENSIONS = set()
 for x in imageio.config.video_extensions:
