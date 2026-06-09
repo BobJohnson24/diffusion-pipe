@@ -111,6 +111,7 @@ def set_config_defaults(config):
         model_config['transformer_dtype'] = DTYPE_MAP[transformer_dtype]
     if diffusion_model_dtype := model_config.get('diffusion_model_dtype', None):
         model_config['diffusion_model_dtype'] = DTYPE_MAP[diffusion_model_dtype]
+    model_config.setdefault('ConvRot', False)
     model_config.setdefault('guidance', 1.0)
 
     if 'adapter' in config:

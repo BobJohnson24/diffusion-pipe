@@ -21,7 +21,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from tqdm import tqdm
 
 from utils.common import is_main_process, VIDEO_EXTENSIONS, round_to_nearest_multiple, round_down_to_multiple, AUTOCAST_DTYPE
-from utils.int8 import is_int8_dtype, quantize_linear_modules
+from utils.int8 import enable_convrot_lora_activation_rotation, is_int8_dtype, quantize_linear_modules
 import comfy.utils
 import comfy.sd
 import comfy.sd1_clip
@@ -238,6 +238,7 @@ class CommonPipeline:
             raise NotImplementedError(f'Adapter type {adapter_type} is not implemented')
         self.peft_config = peft_config
         self.lora_model = peft.get_peft_model(target_model, peft_config)
+        enable_convrot_lora_activation_rotation(self.lora_model)
         if is_main_process():
             self.lora_model.print_trainable_parameters()
         for name, p in target_model.named_parameters():
@@ -522,6 +523,7 @@ class ComfyPipeline(CommonPipeline):
                 model,
                 compute_dtype=self.model_config['dtype'],
                 keep_in_high_precision=self.keep_in_high_precision,
+                use_convrot=self.model_config.get('ConvRot', False),
             )
             return
 

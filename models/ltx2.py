@@ -265,6 +265,7 @@ class LTX2Pipeline(ComfyPipeline):
                 self.diffusion_model,
                 compute_dtype=dtype,
                 keep_in_high_precision=self.keep_in_high_precision,
+                use_convrot=self.model_config.get('ConvRot', False),
             )
         else:
             for name, p in self.diffusion_model.named_parameters():
