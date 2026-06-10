@@ -1,7 +1,7 @@
 A quick and dirty fork to add some features to diffusion pipe, as I wait for other trainers to catch up.
 
 Features:
-Image Sampling during training:
+Image Sampling during training (only for ideogram4):
 
 In your main_example.toml:
 
