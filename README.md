@@ -25,6 +25,8 @@ ConvRot = true
 
 Note: If you train with ConvRot = true, you will need to use /tools/unrotate_convrot_lora.py to unrotate the lora so it applies properly in ComfyUI.
 
+End of Readme modifications. Original Readme below.
+
 Models supported: SDXL, Flux, LTX-Video, HunyuanVideo (t2v), Cosmos, Lumina Image 2.0, Wan2.1 (t2v and i2v), Chroma, HiDream, Stable Diffusion 3, Cosmos-Predict2, OmniGen2, Flux Kontext, Wan2.2, Qwen-Image, Qwen-Image-Edit, HunyuanImage-2.1, AuraFlow, Z-Image, HunyuanVideo-1.5, Flux 2 (Dev and Klein), Anima, Ernie-Image, LTX 2.3, Ideogram4.
 
 ## Features
