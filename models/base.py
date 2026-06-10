@@ -247,9 +247,14 @@ class CommonPipeline:
                 p.data = p.data.to(adapter_config['dtype'])
 
     @torch.no_grad()
-    def sample(self, w=512, h=512):
+    def sample(self, w=512, h=512, steps=None, shift=None):
+        steps = steps or self.sample_steps
+        shift = shift if shift is not None else self.sample_shift
+        scheduler = FlowMatchEulerDiscreteScheduler(shift=shift)
+        sigmas = torch.linspace(1.0, 1 / steps, steps)
+        scheduler.set_timesteps(sigmas=sigmas, device='cuda')
         x = torch.randn((1, self.channels, h//self.spatial_compression, w//self.spatial_compression), device='cuda')
-        timesteps = self.scheduler.timesteps
+        timesteps = scheduler.timesteps
         for i, step in enumerate(tqdm(timesteps, desc='Sampling')):
             t = step / 1000
             t = t.float().view(1)
@@ -259,7 +264,7 @@ class CommonPipeline:
                 inputs_uncond = (x, t, *self.unconds)
                 v_uncond = self.pipeline_model(inputs_uncond).float()
                 v = v_uncond + self.sample_cfg*(v - v_uncond)
-            x = self.scheduler.step(v, step, x, return_dict=False)[0]
+            x = scheduler.step(v, step, x, return_dict=False)[0]
         vae = self.get_vae()
         if isinstance(vae, nn.Module):
             vae = vae.to('cuda')

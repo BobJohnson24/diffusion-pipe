@@ -8,6 +8,7 @@ import time
 import random
 import json
 import inspect
+import re
 from pathlib import Path
 from collections import defaultdict
 
@@ -144,6 +145,9 @@ def set_config_defaults(config):
     config.setdefault('eval_every_n_epochs', None)
     config.setdefault('eval_every_n_examples', None)
     config.setdefault('eval_before_first_step', True)
+    config.setdefault('sample_prompts', None)
+    config.setdefault('sample_every_n_steps', None)
+    config.setdefault('sample_before_first_step', False)
     config.setdefault('compile', False)
     config.setdefault('x_axis_examples', False)
 
@@ -247,6 +251,107 @@ def evaluate(model, model_engine, eval_dataloaders, tb_writer, step, eval_gradie
     model.prepare_block_swap_training()
 
 
+def load_sample_prompts(path):
+    prompts = []
+    path = Path(path)
+    with open(path) as f:
+        for line_num, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            sample = json.loads(line)
+            if 'prompt' not in sample:
+                raise ValueError(f'Sample prompt file {path} line {line_num} is missing "prompt"')
+            prompts.append(sample)
+    if len(prompts) == 0:
+        raise ValueError(f'Sample prompt file {path} did not contain any prompts')
+    return prompts
+
+
+def image_to_chw(img):
+    img = img.detach().float().cpu()
+    if img.ndim == 4:
+        assert img.shape[0] == 1
+        img = img.squeeze(0)
+    if img.ndim != 3:
+        raise RuntimeError(f'Expected sampled image to have 3 or 4 dimensions, got shape {tuple(img.shape)}')
+    if img.shape[-1] in (1, 3, 4):
+        img = img.movedim(-1, 0)
+    return img.clamp(0, 1)
+
+
+def sample_filename(step, idx, prompt):
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '_', prompt.strip()).strip('_')
+    slug = slug[:80] or 'sample'
+    return f'step{step:08d}_{idx:02d}_{slug}.png'
+
+
+def cache_sample_prompts(model, sample_prompts):
+    if not is_main_process():
+        return
+
+    print('Caching sample prompt embeddings')
+    for sample in sample_prompts:
+        prompt = sample['prompt']
+        negative_prompt = sample.get('negative_prompt', '')
+        cfg = sample.get('cfg', 1)
+        model.prepare_sample_test(prompt, negative_prompt=negative_prompt, cfg=cfg)
+        sample['conds'] = tuple(tensor.detach().cpu() for tensor in model.conds)
+        if cfg > 1:
+            sample['unconds'] = tuple(tensor.detach().cpu() for tensor in model.unconds)
+
+
+def unload_cached_models(dataset_manager):
+    for submodel in dataset_manager.submodels:
+        if isinstance(submodel, nn.Module):
+            submodel.to('meta')
+    import comfy.model_management as mm
+    mm.unload_all_models()
+    empty_cuda_cache()
+
+
+def run_samples(model, sample_prompts, sample_dir, tb_writer, step, disable_block_swap=False):
+    if not is_main_process():
+        return
+
+    import torchvision
+
+    os.makedirs(sample_dir, exist_ok=True)
+    print(f'Running samples for step {step}')
+    empty_cuda_cache()
+    was_training = model.pipeline_model.training
+    model.pipeline_model.eval()
+    model.prepare_block_swap_inference(disable_block_swap=disable_block_swap)
+
+    try:
+        with torch.no_grad(), isolate_rng():
+            seed = 0
+            random.seed(seed)
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            for idx, sample in enumerate(sample_prompts):
+                prompt = sample['prompt']
+                width = sample.get('width', 512)
+                height = sample.get('height', 512)
+                steps = sample.get('steps', model.sample_steps)
+                cfg = sample.get('cfg', 1)
+                shift = sample.get('shift', model.model_config.get('shift', model.sample_shift))
+
+                model.conds = tuple(tensor.cuda() for tensor in sample['conds'])
+                if cfg > 1:
+                    model.unconds = tuple(tensor.cuda() for tensor in sample['unconds'])
+                model.sample_cfg = cfg
+                img = image_to_chw(model.sample(w=width, h=height, steps=steps, shift=shift))
+                path = Path(sample_dir) / sample_filename(step, idx, prompt)
+                torchvision.utils.save_image(img, path)
+                tb_writer.add_image(f'samples/{idx}', img, step)
+    finally:
+        model.prepare_block_swap_training()
+        if was_training:
+            model.pipeline_model.train()
+        empty_cuda_cache()
+
+
 def distributed_init(args):
     """Initialize distributed training environment."""
     world_size = int(os.getenv('WORLD_SIZE', '1'))
@@ -313,6 +418,14 @@ if __name__ == '__main__':
     )
 
     model_type = config['model']['type']
+    sample_prompts = None
+    if config['sample_prompts']:
+        assert model_type == 'ideogram4', 'Training samples are currently only implemented for ideogram4'
+        assert config['pipeline_stages'] == 1, 'Training samples currently require pipeline_stages=1'
+        sample_prompts_path = Path(config['sample_prompts'])
+        if not sample_prompts_path.is_absolute():
+            sample_prompts_path = Path(args.config).parent / sample_prompts_path
+        sample_prompts = load_sample_prompts(sample_prompts_path)
 
     if model_type == 'flux':
         from models import flux
@@ -512,7 +625,10 @@ if __name__ == '__main__':
         dist.barrier()
         quit()
 
-    dataset_manager.cache()
+    dataset_manager.cache(unload_models=sample_prompts is None)
+    if sample_prompts:
+        cache_sample_prompts(model, sample_prompts)
+        unload_cached_models(dataset_manager)
     if args.cache_only:
         quit()
 
@@ -687,6 +803,9 @@ if __name__ == '__main__':
         elif optim_type_lower == 'genericoptim':
             from optimizers import generic_optim
             klass = generic_optim.GenericOptim
+        elif optim_type_lower == 'sinksgd_adv':
+            from adv_optm import SinkSGD_adv
+            klass = SinkSGD_adv
         else:
             import pytorch_optimizer
             klass = getattr(pytorch_optimizer, optim_type)
@@ -899,6 +1018,8 @@ if __name__ == '__main__':
     disable_block_swap_for_eval = config.get('disable_block_swap_for_eval', False)
     if config['eval_before_first_step'] and not resume_from_checkpoint:
         evaluate(model, model_engine, eval_dataloaders, tb_writer, 0, config['eval_gradient_accumulation_steps'], disable_block_swap_for_eval)
+    if sample_prompts and config['sample_before_first_step'] and not resume_from_checkpoint:
+        run_samples(model, sample_prompts, Path(run_dir) / 'samples', tb_writer, 0)
 
     # TODO: this is state we need to save and resume when resuming from checkpoint. It only affects logging.
     epoch_loss = 0
@@ -936,6 +1057,9 @@ if __name__ == '__main__':
 
         if (config['eval_every_n_steps'] and step % config['eval_every_n_steps'] == 0) or (finished_epoch and config['eval_every_n_epochs'] and epoch % config['eval_every_n_epochs'] == 0):
             evaluate(model, model_engine, eval_dataloaders, tb_writer, x_axis, config['eval_gradient_accumulation_steps'], disable_block_swap_for_eval)
+
+        if sample_prompts and config['sample_every_n_steps'] and step % config['sample_every_n_steps'] == 0:
+            run_samples(model, sample_prompts, Path(run_dir) / 'samples', tb_writer, x_axis)
 
         if finished_epoch:
             if is_main_process():
