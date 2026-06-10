@@ -1,5 +1,29 @@
-# diffusion-pipe
-A pipeline parallel training script for diffusion models.
+A quick and dirty fork to add some features to diffusion pipe, as I wait for other trainers to catch up.
+
+Features:
+Image Sampling during training:
+
+In your main_example.toml:
+
+```
+# sample settings
+sample_prompts = './samples.jsonl'
+sample_every_n_steps = 500
+sample_before_first_step = true
+```
+samples.jsonl:
+```
+{"prompt": "Dog in the hat", "width": 512, "height": 512, "steps": 20, "cfg": 4}
+{"prompt": "Cat in the hat", "width": 512, "height": 512, "steps": 20, "cfg": 4}
+```
+
+Int8 Lora Training (also available with convrot):
+```
+diffusion_model_dtype = 'int8'
+ConvRot = true
+```
+
+Note: If you train with ConvRot = true, you will need to use /tools/unrotate_convrot_lora.py to unrotate the lora so it applies properly in ComfyUI.
 
 Models supported: SDXL, Flux, LTX-Video, HunyuanVideo (t2v), Cosmos, Lumina Image 2.0, Wan2.1 (t2v and i2v), Chroma, HiDream, Stable Diffusion 3, Cosmos-Predict2, OmniGen2, Flux Kontext, Wan2.2, Qwen-Image, Qwen-Image-Edit, HunyuanImage-2.1, AuraFlow, Z-Image, HunyuanVideo-1.5, Flux 2 (Dev and Klein), Anima, Ernie-Image, LTX 2.3, Ideogram4.
 
